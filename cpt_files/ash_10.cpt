@@ -1,0 +1,8 @@
+#	cpt file created by makecpt on Thu Jan 21 11:31:25 1999
+#	No input V1.0 shade table was given; a gray scale was made.
+#	Contours were made using a mid-value of 1 and a contour interval of 10000
+#	Color values are in the RGB format
+#
+10	200	200	200	10001	200	200	200	
+B	255	255	255	
+F	255	255	255
