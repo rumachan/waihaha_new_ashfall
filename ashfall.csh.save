@@ -1,0 +1,124 @@
+#!/bin/csh 
+
+#ashfall.csh
+#automatic calculation and plotting of ashfall data
+#wind data downloaded independently by script getwind.csh
+#version for 2011 format wind files
+
+#necessary stuff
+set u = _
+
+#define directories
+set program_directory = /home/volcano/programs/new_ashfall
+set data_directory = /home/volcano/data/new_ashfall
+set vol_directory = /home/volcano/programs/new_ashfall/volume_files
+set output_directory = /home/volcano/output/new_ashfall
+set web_directory = /var/www/html/volcano/ashfall
+set public_directory = /home/volcano/output/new_ashfall
+set bin_directory = /home/volcano/bin
+
+
+#this is full list of volcanoes for which wind information is provided
+#set volcano_list = (auckland haroharo mayor ngauruhoe ruapehu taranaki tarawera taupo tongariro white)
+set volcano_list = (ngauruhoe ruapehu taranaki tongariro white)
+
+#arguments (2 choices)
+#ashfall.csh volcano_name yyyymmdd 0630/1830	#manual run, date is local time
+#ashfall.csh 0630/1830	#automatic run
+#have to specify whether to use 0630 or 1830 wind files
+
+if( $#argv == 3 ) then
+        set volcano_name = $argv[1]
+        set day = $argv[2]
+        set time = $argv[3]
+else if( $#argv == 1 ) then
+        set time = $argv[1]
+        set volcano_name = ( $volcano_list )
+        set day = `/bin/date +%Y%m%d`
+else
+        echo "ashfall.csh: syntax eror"
+        echo "correct syntax is ashfall.csh [volcano name] [date yyyymmdd] 0630/1830"
+        exit
+endif
+
+#check if appropriate wind files exist
+#files are ecmwf, gfs, and ukmo
+set wind_ecmwf = $data_directory/gns_wind_model_data_ecmwf_$day$u$time.txt
+set wind_gfs = $data_directory/gns_wind_model_data_gfs_$day$u$time.txt
+set wind_ukmo = $data_directory/gns_wind_model_data_ukmo_$day$u$time.txt
+if ( ! -e $wind_ecmwf || ! -e $wind_gfs || ! -e $wind_ukmo ) then
+        echo one or more wind files not found
+	exit
+endif
+
+#find which file is "model of the day" and set metwindfile variable
+set model_of_day = `grep "Model of the day" $wind_ecmwf | awk '{print $6}'| tr "[:upper:]" "[:lower:]"`
+set metwindfile = $data_directory/gns_wind_model_data_$model_of_day$u$day$u$time.txt
+echo "metwindfile is $metwindfile"
+
+#delete all previous plot files from output directory
+\rm $output_directory/*.ps $output_directory/*.gif $output_directory/*.kml
+
+#run ashfall program
+foreach volcano ( $volcano_name )
+	echo $volcano $day $time
+
+	#extract wind data from metservice wind file
+	#echo extract wind data
+	$program_directory/extract_wind.pl $metwindfile $volcano
+
+	#delete any existing thickness and grid files remaining from previous run
+        if ( -e ASHAUTO.THK ) then
+        	\rm ASHAUTO.THK
+        endif
+        if ( -e ASHAUTO.GRD ) then
+        	\rm ASHAUTO.GRD
+        endif
+
+	#run ashauto executable
+        #input files are: wind ASHAUTO.WIN, volume ASHAUTO.VOL 
+        #output files are: surfer grid ASHAUTO.GRD, xyz triplet ASHAUTO.THK
+
+	set wind_dir = $data_directory/$day$u$time
+	#echo $wind_dir
+	set wind_files = `ls $wind_dir/*$volcano*.wind`
+
+	#loop wind files
+	foreach windfile ($wind_files)
+		set vol_ident = `echo $windfile:t | awk 'BEGIN{FS="."} {print $1}' | awk 'BEGIN{FS="_"} {printf("%s_%s\n", $3, $4)}'`
+		set dt_ident = `echo $windfile:t | awk 'BEGIN{FS="."} {print $1}' | awk 'BEGIN{FS="_"} {printf("%s_%s\n", $1, $2)}'`
+		#identify suitable volumes files
+		foreach volfile (`ls $vol_directory/*$vol_ident*`)
+			#echo windfile $windfile volfile $volfile
+			set erup_ident = `echo $volfile:t | awk 'BEGIN{FS="."} {print $1}'`
+			set thkfile = $dt_ident$u$erup_ident.thk
+			#echo thkfile $thkfile
+        		ln -s $windfile ASHAUTO.WIN
+        		ln -s $volfile ASHAUTO.VOL
+			#echo calculating
+        		$program_directory/ashauto >& /dev/null
+			\rm ASHAUTO.WIN ASHAUTO.VOL ASHAUTO.GRD
+        		\mv ASHAUTO.THK $data_directory/$day$u$time/$thkfile	
+			#echo done calculating
+
+			#create postscript and gif plot
+			#echo plotting
+			set plotfile = $output_directory/$dt_ident$u$erup_ident.ps
+			#echo $plotfile
+			$program_directory/ashfall_plot.csh $volfile $data_directory/$day$u$time/$thkfile $windfile $plotfile
+			#echo converting to gif
+			#$bin_directory/pstogif.pl $plotfile:r 600 
+			(pstogif.pl $plotfile:r 600) >& /dev/null
+		end
+		#create kml files
+		pushd $program_directory	#reqd so pscontour puts files here
+		foreach volcano ( $volcano_name )
+			#echo $day$u$time $dt_ident
+			$program_directory/ashcontour_all2kml.pl $day$u$time $dt_ident $volcano
+		end
+		popd
+	end
+end
+
+#move wind files to sub-directory for final storage
+\mv $wind_ecmwf $wind_gfs $wind_ukmo $data_directory/$day$u$time
